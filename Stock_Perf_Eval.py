@@ -12,7 +12,7 @@ st.set_page_config(layout='wide', initial_sidebar_state='expanded')
 
 TODAY=date.today().strftime("%Y-%m-%d")
 
-st.title("Stock Performance Evaulation")
+st.title("Stock Performance Summary")
 
 st.sidebar.subheader('Load the Invest Tracker File')
 uploaded_file=st.sidebar.file_uploader('Select the Folio Data File', type='xlsx')
@@ -78,11 +78,13 @@ if select_ticker:
             data=stock.history(period=Time_Frame)
         #data_growth=(data.pct_change().fillna(0)+1).cumprod()
         data.index=pd.to_datetime(data.index)
-        return data
+        ticker_name = stock.info.get("longName", ticker)
+        return data,ticker_name
 
     data_load_state=st.text("Load data...")
-    data=load_data(select_ticker)
-    
+    result=load_data(select_ticker)
+    data=result[0]
+    ticker_name=result[1]
     columns=data.columns.to_list()
     
     data = data.rename(columns = {'index':'Date'})
@@ -90,18 +92,25 @@ if select_ticker:
     data['Year']=data['Date'].dt.year
     data['Qtr']=data['Date'].dt.quarter
     data['YQ']="Q"+data['Qtr'].astype(str)+"/"+data['Year'].astype(str)
-    data1=load_data(select_etf)
+    data1=load_data(select_etf)[0]
     data_load_state.text("Loading data...done!")
     
     ticker_quantity = df[df['Symbol'] == select_ticker]['Quantity'].sum()
     invest_value= df[df['Symbol'] == select_ticker]['Investment'].sum()
     purchase_price=invest_value/ticker_quantity
-    
     current_price = data['Close'].iloc[-1]
-    df['target_value']=df['Quantity']*df['Min Tgt Price']
+    
+    if hold_time<=1:
+        df['Min Tgt Price']=df['Purchase Price']*1.20
+        df['target_value']=df['Quantity']*df['Min Tgt Price']
+        df['target_value']=df['target_value']+(df['target_value']-df['Investment'])*0.25
+    else:
+        df['Min Tgt Price']=df['Purchase Price']*(1.20)**hold_time
+        df['target_value']=df['Quantity']*df['Min Tgt Price']
+        df['target_value']=df['target_value']+(df['target_value']-df['Investment'])*0.15
+    
     target_price=df[df['Symbol'] == select_ticker]['target_value'].sum()/ticker_quantity
     
-
     stock_growth=(data["Close"].pct_change().fillna(0)+1).cumprod()
     index_growth=(data1["Close"].pct_change().fillna(0)+1).cumprod()
 
@@ -182,10 +191,13 @@ if select_ticker:
         sharpe = (CAGR(df) - rf)/ volatility(df)
         return sharpe 
         
-    stock_name=f"**Selected Ticker =** **{select_ticker}**"
+    stock_name=f"**Selected Ticker =** :red[**{select_ticker}**]"
     hold_time=f"Hold Time = {hold_time} Yrs"
 
-    st.markdown(stock_name)
+    st.subheader(stock_name)
+    st.markdown(ticker_name)
+    st.markdown("------")
+    st.markdown('''Current Performance''')
     col1,col2,col3,col4,col5=st.columns(5)
     with col1:
         st.markdown("Holdings")
@@ -210,6 +222,7 @@ if select_ticker:
         st.markdown(f"Tgt. : {round((target_price-purchase_price)/purchase_price*100,2)}")
 
     st.markdown("------")
+    st.markdown('''Historical Comparative Performance''')
     col1,col2,col3=st.columns(3)
     with col1:
         st.markdown("CAGR")
