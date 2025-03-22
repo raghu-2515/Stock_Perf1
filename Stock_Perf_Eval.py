@@ -18,10 +18,22 @@ st.sidebar.subheader('Load the Invest Tracker File')
 uploaded_file=st.sidebar.file_uploader('Select the Folio Data File', type='xlsx')
 
 @st.cache_data
+
 def get_price_data(df):
-    for i in range(len(df)):
-        cp= yf.download(df.at[i,'Symbol'],period="1d",interval="1d")['Adj Close']
-        df.loc[i,'Current_Price']=round(cp.sum(),2)
+    symbols = df['Symbol'].tolist()
+    data = yf.download(symbols, period="1d", interval="1d")
+    
+    if not data.empty:
+        # Handle multi-index columns and select closing prices
+        if ('Adj Close') in data.columns:
+            prices = data['Adj Close'].iloc[-1]
+        else:
+            # Fallback to regular Close if Adj Close unavailable
+            prices = data['Close'].iloc[-1]
+        
+        # Update DataFrame with rounded prices
+        df['Current_Price'] = df['Symbol'].map(prices).round(2)
+    
     return df
 
 if uploaded_file:
@@ -38,6 +50,8 @@ if uploaded_file:
     else:
         df=(ddf.loc[ddf['Folio'] == select_folio])
     df.reset_index(drop=True, inplace=True)
+
+    print(df.head())
     
     ticker_list=df["Symbol"].unique().tolist()
     #ticker_list.insert(0,'All')
@@ -57,47 +71,51 @@ if select_ticker:
     #@st.cache
 
     def load_data(ticker):
+        stock=yf.Ticker(ticker)
         if Time_Frame== "Hold Period":
-            data=yf.download(ticker,start=purchase_date,end=TODAY,interval=Time_Interval)
+            data=stock.history(period="1y")
         else:
-            data=yf.download(ticker,period=Time_Frame,interval=Time_Interval)
+            data=stock.history(period=Time_Frame)
         #data_growth=(data.pct_change().fillna(0)+1).cumprod()
-        data.reset_index(inplace=True)
+        data.index=pd.to_datetime(data.index)
         return data
 
     data_load_state=st.text("Load data...")
     data=load_data(select_ticker)
+    
+    columns=data.columns.to_list()
+    
     data = data.rename(columns = {'index':'Date'})
-    data['Date'] = pd.to_datetime(data['Date'])
+    data['Date'] = pd.to_datetime(data.index)
     data['Year']=data['Date'].dt.year
     data['Qtr']=data['Date'].dt.quarter
     data['YQ']="Q"+data['Qtr'].astype(str)+"/"+data['Year'].astype(str)
     data1=load_data(select_etf)
     data_load_state.text("Loading data...done!")
-
+    
     ticker_quantity = df[df['Symbol'] == select_ticker]['Quantity'].sum()
     invest_value= df[df['Symbol'] == select_ticker]['Investment'].sum()
     purchase_price=invest_value/ticker_quantity
     
-    current_price = data['Adj Close'].iloc[-1]
-    df['target_value']=df['Quantity']*df['Target Price']
+    current_price = data['Close'].iloc[-1]
+    df['target_value']=df['Quantity']*df['Min Tgt Price']
     target_price=df[df['Symbol'] == select_ticker]['target_value'].sum()/ticker_quantity
     
 
-    stock_growth=(data["Adj Close"].pct_change().fillna(0)+1).cumprod()
-    index_growth=(data1["Adj Close"].pct_change().fillna(0)+1).cumprod()
+    stock_growth=(data["Close"].pct_change().fillna(0)+1).cumprod()
+    index_growth=(data1["Close"].pct_change().fillna(0)+1).cumprod()
 
     def plot_raw_data():
         fig=go.Figure()
-        fig.add_trace(go.Scatter(x=data['Date'],y=data['Adj Close'],name=select_ticker))
+        fig.add_trace(go.Scatter(x=data['Date'],y=data['Close'],name=select_ticker))
         if select_etf:
-            fig.add_trace(go.Scatter(x=data1['Date'],y=data1['Adj Close'],name=select_etf,yaxis='y2'))
+            fig.add_trace(go.Scatter(x=data1['Date'],y=data1['Close'],name=select_etf,yaxis='y2'))
         fig.layout.update(title_text="Time Series Data",xaxis_rangeslider_visible=False)
         fig.update_layout(yaxis2=dict(overlaying='y',side='right'))
-        corr_coeff=data["Adj Close"].corr(data1["Adj Close"])
+        corr_coeff=data["Close"].corr(data1["Close"])
         fig.add_annotation(
         x=min(data['Date']),  # x position where the reference value is
-        y=max(data['Adj Close']),  # y position of the reference value
+        y=max(data['Close']),  # y position of the reference value
         text=f"Corr. Coeff : {round(corr_coeff,2)}")
 
         st.plotly_chart(fig,use_container_width=True)
@@ -110,7 +128,7 @@ if select_ticker:
         st.plotly_chart(fig,use_container_width=True)
 
     def plot_box_plot():
-        fig = px.box(data_frame=data, x='YQ', y='Adj Close', title=select_ticker+'- Adj Close')
+        fig = px.box(data_frame=data, x='YQ', y='Close', title=select_ticker+'- Close')
         
             
         fig.add_shape(type="line",
@@ -145,7 +163,7 @@ if select_ticker:
  
     def CAGR(data):
         df = data.copy()
-        df['daily_returns'] = df['Adj Close'].pct_change()
+        df['daily_returns'] = df['Close'].pct_change()
         df['cumulative_returns'] = (1 + df['daily_returns']).cumprod()
         trading_days = 252
         n = len(df)/ trading_days
@@ -154,7 +172,7 @@ if select_ticker:
 
     def volatility(data):
         df = data.copy()
-        df['daily_returns'] = df['Adj Close'].pct_change()
+        df['daily_returns'] = df['Close'].pct_change()
         trading_days = 252
         vol = df['daily_returns'].std() * np.sqrt(trading_days)
         return vol
